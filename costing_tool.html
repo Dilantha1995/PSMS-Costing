@@ -1,0 +1,1845 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Costing Tool — PPM / PSMS</title>
+
+<!-- React + Babel + Tailwind via CDN -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.6/babel.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+
+<!-- Libraries: xlsx for Excel, jsPDF + autotable for PDF, pdfjs to render PDFs to images -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=JetBrains+Mono:wght@400;500;600&family=Inter+Tight:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+  :root {
+    --ink: #1a1a1f;
+    --paper: #f7f4ee;
+    --cream: #efeae0;
+    --accent: #6b2737;          /* deep oxblood */
+    --accent-soft: #c84d6b;
+    --gold: #b8893d;
+    --gold-soft: #e5c98e;
+    --grid: rgba(26,26,31,0.08);
+    --ok: #2d6a4f;
+    --warn: #c1440e;
+  }
+  html, body { background: var(--paper); color: var(--ink); }
+  body { font-family: 'Inter Tight', system-ui, sans-serif; }
+  .font-display { font-family: 'Fraunces', serif; font-optical-sizing: auto; }
+  .font-mono { font-family: 'JetBrains Mono', monospace; }
+
+  /* Paper grain */
+  .grain::before {
+    content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+    background-image: radial-gradient(circle at 1px 1px, rgba(26,26,31,0.05) 1px, transparent 0);
+    background-size: 3px 3px; opacity: .5;
+  }
+
+  .ledger-grid {
+    background-image:
+      linear-gradient(var(--grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+    background-size: 24px 24px;
+  }
+
+  .card {
+    background: #fffdf8;
+    border: 1px solid rgba(26,26,31,0.12);
+    box-shadow: 0 1px 0 rgba(26,26,31,0.04), 0 12px 32px -16px rgba(26,26,31,0.18);
+  }
+
+  .btn-primary {
+    background: var(--accent); color: #fffdf8;
+    border: 1px solid var(--accent);
+    transition: all .15s ease;
+  }
+  .btn-primary:hover { background: #511c2a; }
+  .btn-primary:disabled { background:#a08089; border-color:#a08089; cursor:not-allowed; }
+
+  .btn-ghost {
+    background: transparent; color: var(--ink);
+    border: 1px solid rgba(26,26,31,0.2);
+    transition: all .15s ease;
+  }
+  .btn-ghost:hover { background: var(--cream); }
+
+  .input {
+    background: #fffdf8;
+    border: 1px solid rgba(26,26,31,0.18);
+    padding: 8px 10px;
+    border-radius: 4px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    color: var(--ink);
+    outline: none;
+    transition: border-color .15s ease;
+  }
+  .input:focus { border-color: var(--accent); }
+
+  .label { font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: rgba(26,26,31,0.6); font-weight: 600; }
+
+  .chip {
+    display:inline-flex; align-items:center; gap:6px;
+    padding: 3px 9px; border-radius: 999px;
+    font-size: 11px; font-weight: 600; letter-spacing: .03em;
+    background: var(--cream); color: var(--ink);
+    border: 1px solid rgba(26,26,31,0.1);
+  }
+  .chip.ppm { background:#e8eef5; color:#1f4068; border-color:#c5d3e3; }
+  .chip.psms { background:#f5e8e8; color:#6b2737; border-color:#e3c5c5; }
+  .chip.gold { background:#fbf3e2; color:#7a5a1f; border-color:#e5c98e; }
+
+  table.ledger { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+  table.ledger thead th {
+    background: var(--ink); color: var(--paper);
+    font-family: 'Inter Tight', sans-serif; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
+    font-size: 10px; padding: 9px 8px; text-align: left; white-space: nowrap;
+  }
+  table.ledger tbody td {
+    padding: 7px 8px; border-bottom: 1px solid rgba(26,26,31,0.08);
+    font-family: 'JetBrains Mono', monospace; font-size: 12px;
+    vertical-align: top;
+  }
+  table.ledger tbody tr:hover td { background: #fbf8f1; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+  .marker {
+    display:inline-block; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--accent); margin-right: 8px; vertical-align: middle;
+  }
+
+  /* Tab */
+  .tab {
+    padding: 8px 14px; border-bottom: 2px solid transparent;
+    font-weight: 600; font-size: 13px; letter-spacing:.02em;
+    color: rgba(26,26,31,0.55); cursor:pointer;
+    transition: all .15s ease;
+  }
+  .tab:hover { color: var(--ink); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  /* File drop */
+  .dropzone {
+    border: 1.5px dashed rgba(26,26,31,0.3);
+    background: repeating-linear-gradient(45deg, #fffdf8 0 12px, #faf6ec 12px 24px);
+    transition: all .15s ease;
+  }
+  .dropzone:hover, .dropzone.over { border-color: var(--accent); background: #fffdf8; }
+
+  /* Loading dots */
+  @keyframes dot { 0%,80%,100%{opacity:.2} 40%{opacity:1} }
+  .dot { animation: dot 1.4s infinite; display:inline-block }
+  .dot:nth-child(2){ animation-delay:.2s } .dot:nth-child(3){ animation-delay:.4s }
+
+  /* Print */
+  @media print {
+    body { background: white; }
+    .no-print { display: none !important; }
+  }
+
+  /* Ornament rule */
+  .rule {
+    display:flex; align-items:center; gap:12px; color: rgba(26,26,31,0.4);
+  }
+  .rule::before, .rule::after { content:""; flex:1; height:1px; background: rgba(26,26,31,0.15); }
+
+  /* Section header */
+  .section-h {
+    font-family:'Fraunces', serif; font-weight:600; font-size: 14px;
+    letter-spacing: .04em; text-transform: uppercase; color: var(--ink);
+    border-bottom: 1px solid rgba(26,26,31,0.18); padding-bottom: 6px; margin-bottom: 12px;
+  }
+
+  /* Stamp */
+  .stamp {
+    border: 2px solid var(--accent); color: var(--accent);
+    transform: rotate(-4deg);
+    padding: 4px 10px; border-radius: 4px;
+    font-family:'Fraunces',serif; font-weight:600; letter-spacing:.08em;
+    font-size: 11px; text-transform: uppercase;
+    display:inline-block;
+  }
+
+  details[open] summary .chev { transform: rotate(90deg); }
+  .chev { transition: transform .15s ease; display:inline-block; }
+</style>
+</head>
+<body class="grain">
+
+<div id="root"></div>
+
+<script type="text/babel" data-presets="env,react">
+const { useState, useEffect, useRef, useMemo, useCallback } = React;
+
+// Set up pdf.js worker
+pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+// ─────────────────────────────────────────────────────────────
+// Storage helpers (persistent)
+// ─────────────────────────────────────────────────────────────
+const HISTORY_KEY = "costing:history";
+const COUNTER_KEY = "costing:counter";
+const MASTER_KEY = "costing:master";
+const SETTINGS_KEY = "costing:settings";
+
+async function storeGet(key, fallback) {
+  try {
+    const res = await window.storage.get(key);
+    return res ? JSON.parse(res.value) : fallback;
+  } catch { return fallback; }
+}
+async function storeSet(key, val) {
+  try { await window.storage.set(key, JSON.stringify(val)); } catch(e) { console.warn(e); }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Number helpers
+// ─────────────────────────────────────────────────────────────
+const fmt = (n, d=2) => {
+  if (n === null || n === undefined || isNaN(n)) return "-";
+  const num = Number(n);
+  if (num === 0) return "-";
+  return num.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
+};
+const nz = (v) => {
+  if (v === "" || v === null || v === undefined) return 0;
+  const n = Number(String(v).replace(/,/g, ""));
+  return isNaN(n) ? 0 : n;
+};
+
+// ─────────────────────────────────────────────────────────────
+// File → AI extraction
+// ─────────────────────────────────────────────────────────────
+async function fileToBase64(file) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result.split(",")[1]);
+    r.onerror = rej;
+    r.readAsDataURL(file);
+  });
+}
+
+async function pdfFirstPageToImage(file) {
+  // Render first page of PDF to a PNG base64 for vision fallback
+  const buf = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+  const page = await pdf.getPage(1);
+  const viewport = page.getViewport({ scale: 2 });
+  const canvas = document.createElement("canvas");
+  canvas.width = viewport.width; canvas.height = viewport.height;
+  const ctx = canvas.getContext("2d");
+  await page.render({ canvasContext: ctx, viewport }).promise;
+  return canvas.toDataURL("image/png").split(",")[1];
+}
+
+async function callClaude(messages) {
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 4000,
+      messages
+    })
+  });
+  if (!res.ok) throw new Error("API error " + res.status);
+  const data = await res.json();
+  const text = data.content.filter(c => c.type === "text").map(c => c.text).join("\n");
+  return text;
+}
+
+function extractJson(text) {
+  // strip code fences and pick the JSON object
+  let t = text.replace(/```json/g, "").replace(/```/g, "").trim();
+  const start = t.indexOf("{");
+  const end = t.lastIndexOf("}");
+  if (start >= 0 && end > start) t = t.slice(start, end + 1);
+  return JSON.parse(t);
+}
+
+const SUPPLIER_PROMPT = `You are extracting line items from a supplier commercial invoice for an imports costing tool.
+
+Return ONLY valid JSON in this exact shape (no prose, no code fences):
+{
+  "supplier_name": "string",
+  "supplier_address": "string or null",
+  "invoice_no": "string or null",
+  "invoice_date": "string or null",
+  "currency": "USD | MVR | EUR | JPY | INR | etc",
+  "incoterm": "string or null",
+  "consignee_name": "string or null",
+  "freight": number or null,
+  "insurance": number or null,
+  "other_charges": number or null,
+  "invoice_total": number or null,
+  "items": [
+    {
+      "item_code": "string",
+      "description": "string",
+      "uom": "string or null (BX, EA, BOX, LITRE, PCS, etc)",
+      "qty": number,
+      "unit_price": number,
+      "amount": number
+    }
+  ]
+}
+
+Rules:
+- Skip rows that are not actual products (e.g. a line that just says "precision kit" with NIL price).
+- Numbers: no commas, no currency symbol.
+- If freight, insurance, or other charges appear as separate lines, put them in those fields and DO NOT include them as items.
+- "uom" examples: pack size hints like BX, BOX, EACH, LITRE, PCS, KG.
+- Consignee = the receiving company in Maldives (e.g. PROSYNERGY MEDICAL SYSTEMS, PRO PHARMA MALDIVES, QUALITY CONTROL SYSTEMS).`;
+
+const EXPENSE_PROMPT = `You are extracting clearance / local expense charges from a Maldivian clearance agent invoice.
+
+Return ONLY valid JSON (no prose, no fences):
+{
+  "vendor_name": "string",
+  "invoice_no": "string or null",
+  "invoice_date": "string or null",
+  "currency": "MVR | USD",
+  "lines": [
+    { "description": "string", "amount": number }
+  ],
+  "total": number or null
+}
+
+Rules: numbers raw (no commas), include every charge line.`;
+
+async function extractSupplierInvoice(file) {
+  const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+  const isImg = file.type.startsWith("image/");
+  let content;
+  if (isPdf) {
+    const b64 = await fileToBase64(file);
+    content = [
+      { type: "document", source: { type: "base64", media_type: "application/pdf", data: b64 } },
+      { type: "text", text: SUPPLIER_PROMPT }
+    ];
+  } else if (isImg) {
+    const b64 = await fileToBase64(file);
+    content = [
+      { type: "image", source: { type: "base64", media_type: file.type, data: b64 } },
+      { type: "text", text: SUPPLIER_PROMPT }
+    ];
+  } else {
+    throw new Error("Unsupported file type for AI extraction: " + file.name);
+  }
+  const text = await callClaude([{ role: "user", content }]);
+  return extractJson(text);
+}
+
+async function extractExpenseInvoice(file) {
+  const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+  const isImg = file.type.startsWith("image/");
+  let content;
+  if (isPdf) {
+    const b64 = await fileToBase64(file);
+    content = [
+      { type: "document", source: { type: "base64", media_type: "application/pdf", data: b64 } },
+      { type: "text", text: EXPENSE_PROMPT }
+    ];
+  } else if (isImg) {
+    const b64 = await fileToBase64(file);
+    content = [
+      { type: "image", source: { type: "base64", media_type: file.type, data: b64 } },
+      { type: "text", text: EXPENSE_PROMPT }
+    ];
+  } else {
+    throw new Error("Unsupported file type: " + file.name);
+  }
+  const text = await callClaude([{ role: "user", content }]);
+  return extractJson(text);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Company detection by consignee/supplier
+// ─────────────────────────────────────────────────────────────
+function detectCompany(consigneeName, defaultCompany) {
+  if (!consigneeName) return defaultCompany || "PSMS";
+  const n = consigneeName.toUpperCase();
+  if (n.includes("PRO PHARMA") || n.includes("PROPHARMA") || n.includes("PPM")) return "PPM";
+  if (n.includes("PROSYNERGY") || n.includes("PRO SYNERGY") || n.includes("PSMS")) return "PSMS";
+  if (n.includes("QUALITY CONTROL SYSTEMS") || n.includes("QCSM")) return "QCSM";
+  return defaultCompany || "PSMS";
+}
+
+// ─────────────────────────────────────────────────────────────
+// Costing calculation
+// ─────────────────────────────────────────────────────────────
+function calculateCosting(state) {
+  const { items, exchangeRate, supplierCurrency, freight, insurance, supplierOther,
+          financeCost, landingCharges, distributionMethod, marginMultiplier } = state;
+
+  const rate = nz(exchangeRate) || 1;
+
+  // Direct cost: invoice value (in MVR) + finance cost (MVR)
+  const invoiceValueSupplier = items.reduce((s, it) => s + nz(it.qty) * nz(it.unit_price), 0);
+  // Plus any supplier-level freight/insurance/other (already in supplier currency)
+  const supplierAddons = nz(freight) + nz(insurance) + nz(supplierOther);
+  const totalSupplierValue = invoiceValueSupplier + supplierAddons;
+
+  const supplierCcy = (supplierCurrency || "USD").toUpperCase();
+  const invoiceValueMVR = supplierCcy === "MVR" ? totalSupplierValue : totalSupplierValue * rate;
+
+  const financeCostMVR = nz(financeCost); // assumed MVR
+  const totalDirect = invoiceValueMVR + financeCostMVR;
+
+  // Landing cost: sum landing charge lines, converting if needed
+  const totalLanding = landingCharges.reduce((s, lc) => {
+    const amt = nz(lc.amount);
+    const ccy = (lc.currency || "MVR").toUpperCase();
+    const r = nz(lc.rate) || (ccy === "MVR" ? 1 : rate);
+    return s + amt * r;
+  }, 0);
+
+  const totalOther = 0;
+  const totalLandingAndOther = totalLanding + totalOther;
+  const grandTotal = totalDirect + totalLandingAndOther;
+
+  // Distribution base for landing-cost allocation
+  const itemsForDist = items.map(it => {
+    const lineSupplier = nz(it.qty) * nz(it.unit_price);
+    const lineMVRBase = supplierCcy === "MVR" ? lineSupplier : lineSupplier * rate;
+    return { ...it, lineSupplier, lineMVRBase };
+  });
+
+  // Add supplier add-ons (freight/ins/other) proportionally by VALUE to items first
+  // so each item's "direct cost in MVR" reflects freight+insurance share
+  const totalItemValueSupplier = itemsForDist.reduce((s, it) => s + it.lineSupplier, 0);
+  const supplierAddonsMVR = supplierCcy === "MVR" ? supplierAddons : supplierAddons * rate;
+
+  const itemsWithDirect = itemsForDist.map(it => {
+    const share = totalItemValueSupplier > 0 ? it.lineSupplier / totalItemValueSupplier : 0;
+    const addonMVR = supplierAddonsMVR * share;
+    // Finance cost distributed by value too
+    const financeShare = financeCostMVR * share;
+    const directMVR = it.lineMVRBase + addonMVR + financeShare;
+    return { ...it, addonMVR, financeShare, directMVR };
+  });
+
+  // Distribute landing cost
+  const totalQty = itemsWithDirect.reduce((s, it) => s + nz(it.qty), 0);
+  const totalValueForDist = itemsWithDirect.reduce((s, it) => s + it.directMVR, 0);
+
+  const distributed = itemsWithDirect.map(it => {
+    let share = 0;
+    if (distributionMethod === "qty") {
+      share = totalQty > 0 ? nz(it.qty) / totalQty : 0;
+    } else {
+      share = totalValueForDist > 0 ? it.directMVR / totalValueForDist : 0;
+    }
+    const landingShareMVR = totalLandingAndOther * share;
+    const totalCostMVR = it.directMVR + landingShareMVR;
+    const qty = nz(it.qty) || 1;
+    const unitCostMVR = totalCostMVR / qty;
+    const sellingPriceMVR = unitCostMVR * (nz(marginMultiplier) || 1.85);
+    return {
+      ...it,
+      landingShareMVR,
+      totalCostMVR,
+      unitCostMVR,
+      sellingPriceMVR,
+      lineSellingMVR: sellingPriceMVR * qty
+    };
+  });
+
+  return {
+    invoiceValueSupplier,
+    supplierAddons,
+    totalSupplierValue,
+    invoiceValueMVR,
+    financeCostMVR,
+    totalDirect,
+    totalLanding,
+    totalOther,
+    totalLandingAndOther,
+    grandTotal,
+    items: distributed
+  };
+}
+
+// ─────────────────────────────────────────────────────────────
+// Reference number generator
+// ─────────────────────────────────────────────────────────────
+async function nextRefNumber(companyPrefix) {
+  const counters = await storeGet(COUNTER_KEY, {});
+  const year = new Date().getFullYear();
+  const key = `${companyPrefix}-${year}`;
+  const next = (counters[key] || 0) + 1;
+  counters[key] = next;
+  await storeSet(COUNTER_KEY, counters);
+  const padded = String(next).padStart(3, "0");
+  return `${companyPrefix}/COS/${year}/${padded}`;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Exports
+// ─────────────────────────────────────────────────────────────
+function exportExcel(state, calc) {
+  const wb = XLSX.utils.book_new();
+
+  // Sheet 1: Costing Sheet (mirrors the screenshot)
+  const cs = [];
+  cs.push([state.companyName + " — Costing Sheet"]);
+  cs.push(["TIN:", state.companyTIN || ""]);
+  cs.push(["Reg No:", state.companyReg || ""]);
+  cs.push([]);
+  cs.push(["Costing Sheet No:", state.refNumber]);
+  cs.push(["Cost Sheet Date:", state.costSheetDate]);
+  cs.push(["Godown Received Date:", state.godownDate || ""]);
+  cs.push(["BL No:", state.blNo || ""]);
+  cs.push(["Shipment Reference:", state.shipmentRef || ""]);
+  cs.push(["Vendor Name:", state.supplierName]);
+  cs.push(["Invoice No:", state.supplierInvoiceNo]);
+  cs.push(["Invoice Currency:", state.supplierCurrency, "Rate:", state.exchangeRate, "MVR", 1]);
+  cs.push([]);
+  cs.push(["Srn", "Description", "Document Ref No.", "Amount", "Currency", "Rate", "Value (MVR)", "Remarks"]);
+  cs.push(["1.0", "DIRECT COST"]);
+  cs.push(["1.1", "INVOICE VALUE", state.supplierInvoiceNo, calc.totalSupplierValue, state.supplierCurrency, state.exchangeRate, calc.invoiceValueMVR, ""]);
+  cs.push(["1.2", "FINANCE COST*", "", calc.financeCostMVR, "MVR", 1, calc.financeCostMVR, ""]);
+  cs.push(["", "", "", "", "", "Total Direct Cost (A)", calc.totalDirect, ""]);
+  cs.push([]);
+  cs.push(["2.0", "LANDING COST"]);
+  state.landingCharges.forEach((lc, i) => {
+    const r = nz(lc.rate) || (lc.currency === "USD" ? nz(state.exchangeRate) : 1);
+    cs.push([`2.${i+1}`, lc.description, "", nz(lc.amount), lc.currency || "MVR", r, nz(lc.amount) * r, lc.remarks || ""]);
+  });
+  cs.push(["", "", "", "", "", "Total Landing Cost (B)", calc.totalLanding, ""]);
+  cs.push([]);
+  cs.push(["", "", "", "", "", "Total Other Cost (C)", calc.totalOther, ""]);
+  cs.push(["", "", "", "", "", "Total Landing and Other Cost (D)", calc.totalLandingAndOther, ""]);
+  cs.push([]);
+  cs.push(["Total Cost to Be Distribute to Items (A+D)", "", "", "", "", "", calc.grandTotal, ""]);
+  cs.push([]);
+  cs.push(["* Costs with star marks are only absorbing/considering for price-setting decisions."]);
+  cs.push(["Prepared By:", state.preparedBy || ""]);
+
+  const ws1 = XLSX.utils.aoa_to_sheet(cs);
+  ws1["!cols"] = [{wch:6},{wch:34},{wch:18},{wch:14},{wch:10},{wch:8},{wch:16},{wch:18}];
+  XLSX.utils.book_append_sheet(wb, ws1, "Costing Sheet");
+
+  // Sheet 2: Cost Distribution
+  const cd = [["Costing Sheet No:", state.refNumber], ["Company:", state.companyName], []];
+  cd.push([
+    "Srn","Item Code","Description","UOM","Qty","Unit Price ("+state.supplierCurrency+")",
+    "Line Value ("+state.supplierCurrency+")","Line Value (MVR)",
+    "Freight/Ins Share (MVR)","Finance Share (MVR)","Direct (MVR)",
+    "Landing Share (MVR)","Total Cost (MVR)","Unit Cost (MVR)"
+  ]);
+  calc.items.forEach((it, i) => {
+    cd.push([
+      i+1, it.item_code, it.description, it.uom || "",
+      nz(it.qty), nz(it.unit_price),
+      it.lineSupplier, it.lineMVRBase,
+      it.addonMVR, it.financeShare, it.directMVR,
+      it.landingShareMVR, it.totalCostMVR, it.unitCostMVR
+    ]);
+  });
+  cd.push([]);
+  cd.push(["", "", "TOTAL", "", calc.items.reduce((s,it)=>s+nz(it.qty),0), "",
+    calc.invoiceValueSupplier + calc.supplierAddons,
+    calc.invoiceValueMVR, "", calc.financeCostMVR, calc.totalDirect,
+    calc.totalLandingAndOther, calc.grandTotal, ""]);
+  const ws2 = XLSX.utils.aoa_to_sheet(cd);
+  ws2["!cols"] = [{wch:5},{wch:14},{wch:42},{wch:8},{wch:8},{wch:12},{wch:14},{wch:14},{wch:14},{wch:14},{wch:14},{wch:14},{wch:14},{wch:14}];
+  XLSX.utils.book_append_sheet(wb, ws2, "Cost Distribution");
+
+  // Sheet 3: Selling Price Suggestion
+  const sp = [
+    ["Costing Sheet No:", state.refNumber],
+    ["Margin Multiplier:", state.marginMultiplier, "(Selling = Unit Cost × multiplier)"],
+    [],
+    ["Srn","Item Code","Description","UOM","Qty","Unit Cost (MVR)","Suggested Selling / Unit (MVR)","Line Selling (MVR)"]
+  ];
+  calc.items.forEach((it,i) => {
+    sp.push([i+1, it.item_code, it.description, it.uom||"", nz(it.qty), it.unitCostMVR, it.sellingPriceMVR, it.lineSellingMVR]);
+  });
+  sp.push([]);
+  sp.push(["","","TOTAL","",calc.items.reduce((s,it)=>s+nz(it.qty),0),"","",
+    calc.items.reduce((s,it)=>s+it.lineSellingMVR,0)]);
+  const ws3 = XLSX.utils.aoa_to_sheet(sp);
+  ws3["!cols"] = [{wch:5},{wch:14},{wch:42},{wch:8},{wch:8},{wch:16},{wch:22},{wch:18}];
+  XLSX.utils.book_append_sheet(wb, ws3, "Selling Price");
+
+  XLSX.writeFile(wb, `${state.refNumber.replace(/\//g,"_")}.xlsx`);
+}
+
+function exportPDF(state, calc) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
+  const W = doc.internal.pageSize.getWidth();
+
+  // ── COSTING SHEET PAGE ──
+  doc.setFont("helvetica", "bold"); doc.setFontSize(16);
+  doc.text("Costing Sheet", W/2, 40, { align: "center" });
+  doc.setFontSize(9); doc.setFont("helvetica","normal");
+  doc.text(`TIN: ${state.companyTIN || "-"}`, W/2, 56, { align: "center" });
+  doc.text(`Reg No: ${state.companyReg || "-"}`, W/2, 68, { align: "center" });
+
+  doc.setFontSize(11); doc.setFont("helvetica","bold");
+  doc.text(state.companyName, 36, 95);
+  doc.setFontSize(9); doc.setFont("helvetica","normal");
+  let y = 110;
+  const line = (l, r) => {
+    doc.text(l, 36, y);
+    if (r) doc.text(r, 320, y);
+    y += 12;
+  };
+  line(`BL No: ${state.blNo || ""}`, `Costing Sheet No: ${state.refNumber}`);
+  line(`Godown 1: ${state.godown1 || "Warehouse 1"}`, `Godown Received Date: ${state.godownDate || ""}`);
+  line(`Godown 2: ${state.godown2 || ""}`, `Shipment Reference: ${state.shipmentRef || ""}`);
+  line(`Vendor: ${state.supplierName}`, `Cost Sheet Date: ${state.costSheetDate}`);
+  line(`Invoice No: ${state.supplierInvoiceNo}`, `Invoice Currency: ${state.supplierCurrency}  Rate: ${state.exchangeRate}`);
+
+  // Table
+  const rows = [];
+  rows.push([{content:"1.0  DIRECT COST", colSpan: 8, styles:{fillColor:[220,235,220],fontStyle:"bold"}}]);
+  rows.push(["1.1","INVOICE VALUE",state.supplierInvoiceNo,fmt(calc.totalSupplierValue),state.supplierCurrency,fmt(state.exchangeRate),fmt(calc.invoiceValueMVR),""]);
+  rows.push(["1.2","FINANCE COST*","",fmt(calc.financeCostMVR),"MVR","1.00",fmt(calc.financeCostMVR),""]);
+  rows.push([{content:"Total Direct Cost (A)", colSpan:6, styles:{halign:"right",fontStyle:"bold",fillColor:[230,240,250]}},
+             {content:fmt(calc.totalDirect), styles:{halign:"right",fontStyle:"bold",fillColor:[230,240,250]}}, ""]);
+  rows.push([{content:"2.0  LANDING COST", colSpan: 8, styles:{fillColor:[220,235,220],fontStyle:"bold"}}]);
+  state.landingCharges.forEach((lc, i) => {
+    const r = nz(lc.rate) || (lc.currency === "USD" ? nz(state.exchangeRate) : 1);
+    const val = nz(lc.amount) * r;
+    rows.push([`2.${i+1}`, lc.description, "", fmt(nz(lc.amount)), lc.currency || "MVR", fmt(r), fmt(val), lc.remarks || ""]);
+  });
+  rows.push([{content:"Total Landing Cost (B)", colSpan:6, styles:{halign:"right",fontStyle:"bold",fillColor:[230,240,250]}},
+             {content:fmt(calc.totalLanding), styles:{halign:"right",fontStyle:"bold",fillColor:[230,240,250]}}, ""]);
+  rows.push([{content:"Total Other Cost (C)", colSpan:6, styles:{halign:"right",fontStyle:"bold"}}, fmt(calc.totalOther), ""]);
+  rows.push([{content:"Total Landing and Other Cost (D)", colSpan:6, styles:{halign:"right",fontStyle:"bold",fillColor:[255,243,205]}},
+             {content:fmt(calc.totalLandingAndOther), styles:{halign:"right",fontStyle:"bold",fillColor:[255,243,205]}}, ""]);
+  rows.push([{content:"Total Cost to Be Distributed (A+D)", colSpan:6, styles:{halign:"right",fontStyle:"bold",fillColor:[255,220,150]}},
+             {content:fmt(calc.grandTotal), styles:{halign:"right",fontStyle:"bold",fillColor:[255,220,150]}}, ""]);
+
+  doc.autoTable({
+    startY: y + 6,
+    head: [["Srn","Description","Doc Ref","Amount","Ccy","Rate","Value (MVR)","Remarks"]],
+    body: rows,
+    styles: { fontSize: 8, cellPadding: 3 },
+    headStyles: { fillColor:[100,60,120], textColor:255, fontStyle:"bold" },
+    columnStyles: {
+      0:{cellWidth:28}, 1:{cellWidth:130}, 2:{cellWidth:70},
+      3:{cellWidth:55, halign:"right"}, 4:{cellWidth:35},
+      5:{cellWidth:35, halign:"right"}, 6:{cellWidth:70, halign:"right"},
+      7:{cellWidth:55}
+    },
+    theme: "grid"
+  });
+
+  let endY = doc.lastAutoTable.finalY + 16;
+  doc.setFontSize(8); doc.setFont("helvetica","italic");
+  doc.text("* Costs with star marks are only absorbing/considering for price-setting decisions and other than those two costs, we are receiving system.", 36, endY, { maxWidth: W-72 });
+  endY += 30;
+  doc.setFont("helvetica","normal");
+  doc.text(`Prepared By: ${state.preparedBy || ""}`, 36, endY);
+  doc.text(`Checked By:`, 220, endY);
+  doc.text(`Approved By:`, 400, endY);
+
+  // ── DISTRIBUTION PAGE ──
+  doc.addPage();
+  doc.setFontSize(14); doc.setFont("helvetica","bold");
+  doc.text("Cost Distribution to Items", W/2, 40, { align: "center" });
+  doc.setFontSize(9); doc.setFont("helvetica","normal");
+  doc.text(`Costing Sheet: ${state.refNumber}    Method: ${state.distributionMethod === "qty" ? "By Quantity" : "By Value"}`, W/2, 56, { align: "center" });
+
+  const distRows = calc.items.map((it,i) => [
+    i+1, it.item_code || "", (it.description||"").substring(0,40), it.uom || "",
+    fmt(nz(it.qty),0), fmt(nz(it.unit_price)),
+    fmt(it.lineMVRBase), fmt(it.addonMVR+it.financeShare),
+    fmt(it.directMVR), fmt(it.landingShareMVR),
+    fmt(it.totalCostMVR), fmt(it.unitCostMVR)
+  ]);
+  const totalQty = calc.items.reduce((s,it)=>s+nz(it.qty),0);
+  distRows.push([
+    {content:"TOTAL", colSpan:4, styles:{fontStyle:"bold", halign:"right"}},
+    {content: fmt(totalQty,0), styles:{fontStyle:"bold", halign:"right"}},
+    "", fmt(calc.invoiceValueMVR), fmt(calc.financeCostMVR + (calc.invoiceValueMVR - calc.items.reduce((s,it)=>s+it.lineMVRBase,0))),
+    fmt(calc.totalDirect), fmt(calc.totalLandingAndOther),
+    {content: fmt(calc.grandTotal), styles:{fontStyle:"bold"}}, ""
+  ]);
+
+  doc.autoTable({
+    startY: 70,
+    head: [["#","Code","Description","UOM","Qty","Unit Px","Line MVR","Frt+Fin","Direct","Landing","Total","Unit Cost"]],
+    body: distRows,
+    styles: { fontSize: 7, cellPadding: 2.5 },
+    headStyles: { fillColor:[100,60,120], textColor:255 },
+    columnStyles: {
+      0:{cellWidth:18}, 1:{cellWidth:50}, 2:{cellWidth:120}, 3:{cellWidth:25},
+      4:{cellWidth:28,halign:"right"}, 5:{cellWidth:36,halign:"right"},
+      6:{cellWidth:46,halign:"right"}, 7:{cellWidth:42,halign:"right"},
+      8:{cellWidth:46,halign:"right"}, 9:{cellWidth:42,halign:"right"},
+      10:{cellWidth:46,halign:"right"}, 11:{cellWidth:46,halign:"right"}
+    },
+    theme: "grid"
+  });
+
+  // ── SELLING PRICE PAGE ──
+  doc.addPage();
+  doc.setFontSize(14); doc.setFont("helvetica","bold");
+  doc.text("Suggested Selling Price", W/2, 40, { align: "center" });
+  doc.setFontSize(9); doc.setFont("helvetica","normal");
+  doc.text(`Costing Sheet: ${state.refNumber}   Multiplier: ${state.marginMultiplier}× (Selling = Unit Cost × ${state.marginMultiplier})`, W/2, 56, { align: "center" });
+
+  const spRows = calc.items.map((it,i) => [
+    i+1, it.item_code || "", (it.description||"").substring(0,50), it.uom || "",
+    fmt(nz(it.qty),0), fmt(it.unitCostMVR), fmt(it.sellingPriceMVR), fmt(it.lineSellingMVR)
+  ]);
+  spRows.push([
+    {content:"TOTAL", colSpan:4, styles:{fontStyle:"bold",halign:"right"}},
+    {content: fmt(calc.items.reduce((s,it)=>s+nz(it.qty),0),0), styles:{fontStyle:"bold",halign:"right"}},
+    "", "",
+    {content: fmt(calc.items.reduce((s,it)=>s+it.lineSellingMVR,0)), styles:{fontStyle:"bold",halign:"right"}}
+  ]);
+
+  doc.autoTable({
+    startY: 70,
+    head: [["#","Code","Description","UOM","Qty","Unit Cost (MVR)","Suggested / Unit (MVR)","Line Selling (MVR)"]],
+    body: spRows,
+    styles: { fontSize: 8, cellPadding: 3 },
+    headStyles: { fillColor:[100,60,120], textColor:255 },
+    columnStyles: {
+      0:{cellWidth:20}, 1:{cellWidth:60}, 2:{cellWidth:160}, 3:{cellWidth:30},
+      4:{cellWidth:40,halign:"right"}, 5:{cellWidth:70,halign:"right"},
+      6:{cellWidth:85,halign:"right"}, 7:{cellWidth:75,halign:"right"}
+    },
+    theme: "grid"
+  });
+
+  doc.save(`${state.refNumber.replace(/\//g,"_")}.pdf`);
+}
+
+function exportMasterExcel(master) {
+  const wb = XLSX.utils.book_new();
+  const head = ["Date","Costing Ref","Company","Item Code","Description","UOM","Qty","Unit Cost (MVR)","Total Cost (MVR)","Suggested Selling (MVR)","Supplier","Supplier Invoice","Currency","Exchange Rate"];
+  const rows = [head];
+  master.forEach(r => rows.push([
+    r.date, r.ref, r.company, r.item_code, r.description, r.uom || "",
+    r.qty, r.unit_cost_mvr, r.total_cost_mvr, r.selling_mvr,
+    r.supplier, r.supplier_invoice, r.currency, r.rate
+  ]));
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  ws["!cols"] = [{wch:12},{wch:24},{wch:8},{wch:14},{wch:42},{wch:8},{wch:8},{wch:14},{wch:14},{wch:14},{wch:24},{wch:16},{wch:8},{wch:10}];
+  XLSX.utils.book_append_sheet(wb, ws, "Master History");
+  XLSX.writeFile(wb, `costing_master_history_${new Date().toISOString().slice(0,10)}.xlsx`);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Company presets
+// ─────────────────────────────────────────────────────────────
+const COMPANY_PRESETS = {
+  PSMS: {
+    name: "ProSynergy Medical System Pvt Ltd",
+    tin: "1002426GST501",
+    reg: "C-191/2007",
+    prefix: "PSMS"
+  },
+  PPM: {
+    name: "Pro Pharma Maldives Private Limited",
+    tin: "",
+    reg: "",
+    prefix: "PPM"
+  },
+  QCSM: {
+    name: "Quality Control Systems Maldives Pvt Ltd",
+    tin: "",
+    reg: "",
+    prefix: "QCSM"
+  }
+};
+
+// ─────────────────────────────────────────────────────────────
+// Default state
+// ─────────────────────────────────────────────────────────────
+const DEFAULT_STATE = () => ({
+  company: "PSMS",
+  companyName: COMPANY_PRESETS.PSMS.name,
+  companyTIN: COMPANY_PRESETS.PSMS.tin,
+  companyReg: COMPANY_PRESETS.PSMS.reg,
+  refNumber: "",
+  costSheetDate: new Date().toISOString().slice(0,10),
+  godownDate: new Date().toISOString().slice(0,10),
+  godown1: "Warehouse 1",
+  godown2: "",
+  blNo: "",
+  shipmentRef: "",
+  preparedBy: "",
+
+  supplierName: "",
+  supplierInvoiceNo: "",
+  supplierCurrency: "USD",
+  exchangeRate: 21,
+  freight: 0,
+  insurance: 0,
+  supplierOther: 0,
+
+  financeCost: 0,
+
+  items: [],
+  landingCharges: [
+    { description: "Clearing Charges",     amount: 0, currency: "MVR", rate: 1, remarks: "" },
+    { description: "MPL Charges",          amount: 0, currency: "MVR", rate: 1, remarks: "" },
+    { description: "Que Wall Charges",     amount: 0, currency: "MVR", rate: 1, remarks: "" },
+    { description: "Custom charges",       amount: 0, currency: "MVR", rate: 1, remarks: "" },
+    { description: "DO Charges & THC Charges", amount: 0, currency: "MVR", rate: 1, remarks: "" },
+    { description: "Dhoni Charges",        amount: 0, currency: "MVR", rate: 1, remarks: "" },
+    { description: "Transport Charges",    amount: 0, currency: "MVR", rate: 1, remarks: "" },
+    { description: "Demurrage",            amount: 0, currency: "MVR", rate: 1, remarks: "" },
+    { description: "FREIGHT (Local)",      amount: 0, currency: "USD", rate: 21, remarks: "" },
+    { description: "INSURANCE",            amount: 0, currency: "MVR", rate: 1, remarks: "" },
+    { description: "OTHERS",               amount: 0, currency: "MVR", rate: 1, remarks: "" },
+    { description: "FREIGHT (Foreign)",    amount: 0, currency: "USD", rate: 21, remarks: "" },
+    { description: "Bank Charges",         amount: 0, currency: "MVR", rate: 1, remarks: "" },
+    { description: "Storage Charges*",     amount: 0, currency: "MVR", rate: 1, remarks: "" },
+    { description: "Transport Charges",    amount: 0, currency: "MVR", rate: 1, remarks: "" },
+    { description: "Other Charges",        amount: 0, currency: "MVR", rate: 1, remarks: "" },
+    { description: "MPL Express Charges",  amount: 0, currency: "MVR", rate: 1, remarks: "" }
+  ],
+
+  distributionMethod: "value", // "value" | "qty"
+  marginMultiplier: 1.85
+});
+
+// ─────────────────────────────────────────────────────────────
+// Main App
+// ─────────────────────────────────────────────────────────────
+function App() {
+  const [tab, setTab] = useState("new");
+  const [state, setState] = useState(DEFAULT_STATE());
+  const [history, setHistory] = useState([]);
+  const [master, setMaster] = useState([]);
+  const [settings, setSettings] = useState({ defaultRate: 21, defaultMargin: 1.85, defaultCompany: "PSMS" });
+  const [busy, setBusy] = useState(false);
+  const [busyMsg, setBusyMsg] = useState("");
+  const [extractedFiles, setExtractedFiles] = useState([]); // {name, kind: supplier|expense, ok, error}
+  const [saved, setSaved] = useState(false);
+
+  // Initial load
+  useEffect(() => {
+    (async () => {
+      const h = await storeGet(HISTORY_KEY, []);
+      const m = await storeGet(MASTER_KEY, []);
+      const s = await storeGet(SETTINGS_KEY, { defaultRate: 21, defaultMargin: 1.85, defaultCompany: "PSMS" });
+      setHistory(h); setMaster(m); setSettings(s);
+      setState(prev => ({ ...prev, exchangeRate: s.defaultRate, marginMultiplier: s.defaultMargin, company: s.defaultCompany, ...COMPANY_PRESETS[s.defaultCompany] && {
+        companyName: COMPANY_PRESETS[s.defaultCompany].name,
+        companyTIN: COMPANY_PRESETS[s.defaultCompany].tin,
+        companyReg: COMPANY_PRESETS[s.defaultCompany].reg
+      } }));
+    })();
+  }, []);
+
+  const calc = useMemo(() => calculateCosting(state), [state]);
+
+  const updateField = (k, v) => { setState(p => ({ ...p, [k]: v })); setSaved(false); };
+  const updateItem = (i, k, v) => {
+    setState(p => {
+      const items = [...p.items];
+      items[i] = { ...items[i], [k]: v };
+      return { ...p, items };
+    });
+    setSaved(false);
+  };
+  const updateLanding = (i, k, v) => {
+    setState(p => {
+      const lc = [...p.landingCharges];
+      lc[i] = { ...lc[i], [k]: v };
+      return { ...p, landingCharges: lc };
+    });
+    setSaved(false);
+  };
+  const addItem = () => setState(p => ({ ...p, items: [...p.items, { item_code:"", description:"", uom:"", qty:1, unit_price:0 }] }));
+  const removeItem = (i) => setState(p => ({ ...p, items: p.items.filter((_,idx)=>idx!==i) }));
+  const addLanding = () => setState(p => ({ ...p, landingCharges: [...p.landingCharges, { description:"", amount:0, currency:"MVR", rate:1, remarks:"" }]}));
+  const removeLanding = (i) => setState(p => ({ ...p, landingCharges: p.landingCharges.filter((_,idx)=>idx!==i)}));
+
+  const changeCompany = (code) => {
+    const preset = COMPANY_PRESETS[code];
+    setState(p => ({ ...p, company: code, companyName: preset.name, companyTIN: preset.tin, companyReg: preset.reg }));
+    setSaved(false);
+  };
+
+  // File upload handler
+  const handleFileUpload = async (files, kind) => {
+    if (!files || files.length === 0) return;
+    setBusy(true);
+    setSaved(false);
+    const results = [];
+    for (const f of Array.from(files)) {
+      setBusyMsg(`Reading ${f.name}…`);
+      try {
+        if (f.name.toLowerCase().endsWith(".xlsx") || f.name.toLowerCase().endsWith(".xls")) {
+          // Excel: read locally, no AI needed
+          const buf = await f.arrayBuffer();
+          const wb = XLSX.read(buf, { type: "array" });
+          // For now: send Excel content as text to Claude for extraction
+          const sheet = wb.Sheets[wb.SheetNames[0]];
+          const csv = XLSX.utils.sheet_to_csv(sheet);
+          const prompt = kind === "supplier" ? SUPPLIER_PROMPT : EXPENSE_PROMPT;
+          const text = await callClaude([{ role: "user", content: [{ type: "text", text: prompt + "\n\nHere is the spreadsheet content:\n\n" + csv }] }]);
+          const data = extractJson(text);
+          applyExtraction(data, kind, f.name);
+          results.push({ name: f.name, kind, ok: true });
+        } else {
+          const data = kind === "supplier" ? await extractSupplierInvoice(f) : await extractExpenseInvoice(f);
+          applyExtraction(data, kind, f.name);
+          results.push({ name: f.name, kind, ok: true });
+        }
+      } catch (e) {
+        console.error(e);
+        results.push({ name: f.name, kind, ok: false, error: e.message });
+      }
+    }
+    setExtractedFiles(prev => [...prev, ...results]);
+    setBusy(false);
+    setBusyMsg("");
+  };
+
+  function applyExtraction(data, kind, filename) {
+    if (kind === "supplier") {
+      const detected = detectCompany(data.consignee_name, settings.defaultCompany);
+      setState(p => {
+        const newItems = (data.items || []).map(it => ({
+          item_code: String(it.item_code || ""),
+          description: it.description || "",
+          uom: it.uom || "",
+          qty: nz(it.qty),
+          unit_price: nz(it.unit_price)
+        }));
+        return {
+          ...p,
+          supplierName: data.supplier_name || p.supplierName,
+          supplierInvoiceNo: data.invoice_no || p.supplierInvoiceNo,
+          supplierCurrency: (data.currency || p.supplierCurrency).toUpperCase(),
+          freight: nz(data.freight) || p.freight,
+          insurance: nz(data.insurance) || p.insurance,
+          supplierOther: nz(data.other_charges) || p.supplierOther,
+          items: [...p.items, ...newItems],
+          company: detected,
+          companyName: COMPANY_PRESETS[detected]?.name || p.companyName,
+          companyTIN: COMPANY_PRESETS[detected]?.tin || p.companyTIN,
+          companyReg: COMPANY_PRESETS[detected]?.reg || p.companyReg
+        };
+      });
+    } else {
+      // expense → merge into landing charges by matching description
+      setState(p => {
+        let lc = [...p.landingCharges];
+        const map = {
+          "clearing": 0, "clearance": 0,
+          "mpl express": 16, "mpl": 1,
+          "que wall": 2, "quewall": 2,
+          "custom duty": 3, "custom charge": 3, "customs": 3,
+          "do ": 4, "thc": 4, "delivery order": 4, "macl do": 4,
+          "dhoni": 5,
+          "transport": 6, "pick up": 6, "pickup": 6,
+          "demurrage": 7,
+          "freight local": 8,
+          "insurance": 9,
+          "freight foreign": 11, "freight": 11,
+          "bank": 12,
+          "storage": 13,
+          "labour": 14, "labor": 14,
+          "documentation": 15, "prevaluation": 15, "form": 15, "other": 15
+        };
+        (data.lines || []).forEach(ln => {
+          const desc = (ln.description || "").toLowerCase();
+          let idx = -1;
+          for (const k of Object.keys(map)) {
+            if (desc.includes(k)) { idx = map[k]; break; }
+          }
+          if (idx >= 0 && idx < lc.length) {
+            lc[idx] = { ...lc[idx], amount: nz(lc[idx].amount) + nz(ln.amount) };
+          } else {
+            lc.push({ description: ln.description, amount: nz(ln.amount), currency: data.currency || "MVR", rate: 1, remarks: "from " + filename });
+          }
+        });
+        return { ...p, landingCharges: lc };
+      });
+    }
+  }
+
+  // Save costing
+  const saveCosting = async () => {
+    setBusy(true); setBusyMsg("Saving…");
+    let ref = state.refNumber;
+    if (!ref) {
+      ref = await nextRefNumber(COMPANY_PRESETS[state.company].prefix);
+    }
+    const finalState = { ...state, refNumber: ref };
+    const record = {
+      ref,
+      date: state.costSheetDate,
+      company: state.company,
+      supplierName: state.supplierName,
+      supplierInvoiceNo: state.supplierInvoiceNo,
+      grandTotal: calc.grandTotal,
+      state: finalState,
+      savedAt: new Date().toISOString()
+    };
+    const newHistory = [record, ...history.filter(h => h.ref !== ref)];
+    setHistory(newHistory);
+    await storeSet(HISTORY_KEY, newHistory);
+
+    // Append to master
+    const newMasterRows = calc.items.map(it => ({
+      date: state.costSheetDate,
+      ref,
+      company: state.company,
+      item_code: it.item_code,
+      description: it.description,
+      uom: it.uom,
+      qty: nz(it.qty),
+      unit_cost_mvr: it.unitCostMVR,
+      total_cost_mvr: it.totalCostMVR,
+      selling_mvr: it.sellingPriceMVR,
+      supplier: state.supplierName,
+      supplier_invoice: state.supplierInvoiceNo,
+      currency: state.supplierCurrency,
+      rate: state.exchangeRate
+    }));
+    // Remove old entries with same ref then append
+    const filteredMaster = master.filter(r => r.ref !== ref);
+    const newMaster = [...filteredMaster, ...newMasterRows];
+    setMaster(newMaster);
+    await storeSet(MASTER_KEY, newMaster);
+
+    setState(finalState);
+    setSaved(true);
+    setBusy(false); setBusyMsg("");
+  };
+
+  const loadFromHistory = (rec) => {
+    setState(rec.state);
+    setTab("new");
+  };
+
+  const deleteHistoryEntry = async (ref) => {
+    if (!confirm(`Delete costing ${ref}? Master history entries for this shipment will also be removed.`)) return;
+    const newHistory = history.filter(h => h.ref !== ref);
+    const newMaster = master.filter(r => r.ref !== ref);
+    setHistory(newHistory); setMaster(newMaster);
+    await storeSet(HISTORY_KEY, newHistory);
+    await storeSet(MASTER_KEY, newMaster);
+  };
+
+  const newCosting = () => {
+    if (!confirm("Start a new costing? Current unsaved changes will be lost.")) return;
+    const fresh = DEFAULT_STATE();
+    fresh.exchangeRate = settings.defaultRate;
+    fresh.marginMultiplier = settings.defaultMargin;
+    fresh.company = settings.defaultCompany;
+    const preset = COMPANY_PRESETS[settings.defaultCompany];
+    if (preset) { fresh.companyName = preset.name; fresh.companyTIN = preset.tin; fresh.companyReg = preset.reg; }
+    setState(fresh);
+    setExtractedFiles([]);
+    setSaved(false);
+  };
+
+  const saveSettings = async (s) => {
+    setSettings(s);
+    await storeSet(SETTINGS_KEY, s);
+  };
+
+  return (
+    <div className="relative z-10 max-w-[1400px] mx-auto px-4 sm:px-6 py-6">
+      {/* ── Header ── */}
+      <header className="mb-6">
+        <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-3 mb-1">
+              <span className="text-[10px] font-mono tracking-[0.25em] text-stone-500 uppercase">Anno 2026 — Imports Costing</span>
+              <span className="h-px flex-1 bg-stone-300 hidden sm:block"></span>
+            </div>
+            <h1 className="font-display text-4xl sm:text-5xl font-semibold leading-none">
+              The Costing <span className="italic" style={{color:"var(--accent)"}}>Ledger</span>
+            </h1>
+            <p className="text-sm text-stone-600 mt-1 font-mono">PPM · PSMS · QCSM — landed cost & price reckoning</p>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <button onClick={newCosting} className="btn-ghost px-3 py-2 text-xs uppercase tracking-wider font-semibold rounded">＋ New</button>
+          </div>
+        </div>
+        <div className="mt-5 flex gap-1 border-b border-stone-300">
+          <div className={`tab ${tab==="new"?"active":""}`} onClick={()=>setTab("new")}>① Build Costing</div>
+          <div className={`tab ${tab==="preview"?"active":""}`} onClick={()=>setTab("preview")}>② Review & Export</div>
+          <div className={`tab ${tab==="history"?"active":""}`} onClick={()=>setTab("history")}>History</div>
+          <div className={`tab ${tab==="master"?"active":""}`} onClick={()=>setTab("master")}>Master Items</div>
+          <div className={`tab ${tab==="settings"?"active":""}`} onClick={()=>setTab("settings")}>Settings</div>
+        </div>
+      </header>
+
+      {tab === "new" && (
+        <BuildTab
+          state={state} setState={setState} updateField={updateField}
+          updateItem={updateItem} updateLanding={updateLanding}
+          addItem={addItem} removeItem={removeItem}
+          addLanding={addLanding} removeLanding={removeLanding}
+          changeCompany={changeCompany}
+          handleFileUpload={handleFileUpload}
+          extractedFiles={extractedFiles} setExtractedFiles={setExtractedFiles}
+          calc={calc} busy={busy} busyMsg={busyMsg}
+          settings={settings}
+        />
+      )}
+      {tab === "preview" && (
+        <PreviewTab
+          state={state} calc={calc}
+          onSave={saveCosting} saved={saved} busy={busy}
+        />
+      )}
+      {tab === "history" && (
+        <HistoryTab history={history} onLoad={loadFromHistory} onDelete={deleteHistoryEntry} />
+      )}
+      {tab === "master" && (
+        <MasterTab master={master} />
+      )}
+      {tab === "settings" && (
+        <SettingsTab settings={settings} onSave={saveSettings} />
+      )}
+
+      {busy && (
+        <div className="fixed bottom-6 right-6 card rounded px-4 py-3 z-50 flex items-center gap-2">
+          <span className="text-xs font-mono">{busyMsg || "Working"}</span>
+          <span className="text-sm"><span className="dot">●</span><span className="dot">●</span><span className="dot">●</span></span>
+        </div>
+      )}
+
+      <footer className="mt-10 pt-6 border-t border-stone-300 text-xs text-stone-500 font-mono flex flex-col sm:flex-row justify-between gap-2">
+        <span>Costing Ledger · self-contained · runs on phone, tablet, desktop</span>
+        <span>Data stored privately on this account</span>
+      </footer>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Build Tab
+// ─────────────────────────────────────────────────────────────
+function BuildTab({ state, setState, updateField, updateItem, updateLanding,
+                    addItem, removeItem, addLanding, removeLanding,
+                    changeCompany, handleFileUpload, extractedFiles, setExtractedFiles,
+                    calc, busy, busyMsg, settings }) {
+
+  const supplierDropRef = useRef(null);
+  const expenseDropRef = useRef(null);
+
+  const onDrop = (e, kind) => {
+    e.preventDefault();
+    e.currentTarget.classList.remove("over");
+    handleFileUpload(e.dataTransfer.files, kind);
+  };
+
+  return (
+    <div className="grid lg:grid-cols-[1.1fr_1fr] gap-6">
+      {/* ── LEFT: Inputs ── */}
+      <div className="space-y-6">
+
+        {/* Company & shipment header */}
+        <section className="card rounded p-5">
+          <div className="section-h flex items-center justify-between">
+            <span><span className="marker"></span>Header</span>
+            <span className={`chip ${state.company === "PPM" ? "ppm" : state.company === "PSMS" ? "psms" : "gold"}`}>
+              {state.company}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <div>
+              <div className="label mb-1">Company</div>
+              <select className="input w-full" value={state.company} onChange={e=>changeCompany(e.target.value)}>
+                <option value="PSMS">PSMS — ProSynergy</option>
+                <option value="PPM">PPM — Pro Pharma</option>
+                <option value="QCSM">QCSM — Quality Control Sys</option>
+              </select>
+            </div>
+            <div>
+              <div className="label mb-1">Cost Sheet Date</div>
+              <input type="date" className="input w-full" value={state.costSheetDate} onChange={e=>updateField("costSheetDate", e.target.value)} />
+            </div>
+            <div>
+              <div className="label mb-1">Godown Received</div>
+              <input type="date" className="input w-full" value={state.godownDate} onChange={e=>updateField("godownDate", e.target.value)} />
+            </div>
+            <div>
+              <div className="label mb-1">BL / AWB No.</div>
+              <input className="input w-full" value={state.blNo} onChange={e=>updateField("blNo", e.target.value)} />
+            </div>
+            <div>
+              <div className="label mb-1">Shipment Ref</div>
+              <input className="input w-full" value={state.shipmentRef} onChange={e=>updateField("shipmentRef", e.target.value)} />
+            </div>
+            <div>
+              <div className="label mb-1">Prepared By</div>
+              <input className="input w-full" value={state.preparedBy} onChange={e=>updateField("preparedBy", e.target.value)} />
+            </div>
+            <div className="col-span-2 sm:col-span-1">
+              <div className="label mb-1">Costing Ref No.</div>
+              <input className="input w-full" placeholder="auto-generates on save" value={state.refNumber} onChange={e=>updateField("refNumber", e.target.value)} />
+            </div>
+          </div>
+        </section>
+
+        {/* Upload zones */}
+        <section className="card rounded p-5">
+          <div className="section-h"><span className="marker"></span>Upload Documents — AI extraction</div>
+
+          <div className="grid sm:grid-cols-2 gap-4">
+            <label
+              ref={supplierDropRef}
+              className="dropzone rounded p-4 text-center cursor-pointer block"
+              onDragOver={e=>{e.preventDefault(); e.currentTarget.classList.add("over");}}
+              onDragLeave={e=>e.currentTarget.classList.remove("over")}
+              onDrop={e=>onDrop(e,"supplier")}
+            >
+              <input type="file" multiple accept=".pdf,.png,.jpg,.jpeg,.webp,.xlsx,.xls" className="hidden" onChange={e=>handleFileUpload(e.target.files, "supplier")} disabled={busy}/>
+              <div className="text-2xl mb-1">📄</div>
+              <div className="font-semibold text-sm">Supplier Invoice</div>
+              <div className="text-xs text-stone-500 mt-1">Drop PDF / image / Excel — items, prices, freight, insurance extracted automatically</div>
+            </label>
+
+            <label
+              ref={expenseDropRef}
+              className="dropzone rounded p-4 text-center cursor-pointer block"
+              onDragOver={e=>{e.preventDefault(); e.currentTarget.classList.add("over");}}
+              onDragLeave={e=>e.currentTarget.classList.remove("over")}
+              onDrop={e=>onDrop(e,"expense")}
+            >
+              <input type="file" multiple accept=".pdf,.png,.jpg,.jpeg,.webp,.xlsx,.xls" className="hidden" onChange={e=>handleFileUpload(e.target.files, "expense")} disabled={busy}/>
+              <div className="text-2xl mb-1">🧾</div>
+              <div className="font-semibold text-sm">Clearance / Expense Invoice</div>
+              <div className="text-xs text-stone-500 mt-1">Drop O'Nala or similar agent invoice — charges added into Landing Costs</div>
+            </label>
+          </div>
+
+          {extractedFiles.length > 0 && (
+            <div className="mt-4 space-y-1">
+              {extractedFiles.map((f, i) => (
+                <div key={i} className="flex items-center justify-between text-xs font-mono py-1 px-2 rounded" style={{background:"var(--cream)"}}>
+                  <span>
+                    {f.ok ? "✓" : "✗"} <span className="text-stone-700">[{f.kind}]</span> {f.name}
+                    {f.error && <span className="text-red-700 ml-2">— {f.error}</span>}
+                  </span>
+                  <button className="text-stone-500 hover:text-red-700" onClick={()=>setExtractedFiles(p=>p.filter((_,idx)=>idx!==i))}>×</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
+        {/* Supplier invoice details */}
+        <section className="card rounded p-5">
+          <div className="section-h"><span className="marker"></span>Supplier Invoice</div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="col-span-2">
+              <div className="label mb-1">Supplier / Vendor</div>
+              <input className="input w-full" value={state.supplierName} onChange={e=>updateField("supplierName", e.target.value)} />
+            </div>
+            <div>
+              <div className="label mb-1">Invoice No.</div>
+              <input className="input w-full" value={state.supplierInvoiceNo} onChange={e=>updateField("supplierInvoiceNo", e.target.value)} />
+            </div>
+            <div>
+              <div className="label mb-1">Currency</div>
+              <select className="input w-full" value={state.supplierCurrency} onChange={e=>updateField("supplierCurrency", e.target.value)}>
+                <option>USD</option><option>EUR</option><option>JPY</option><option>INR</option><option>GBP</option><option>MVR</option>
+              </select>
+            </div>
+            <div>
+              <div className="label mb-1">Exchange Rate → MVR</div>
+              <input type="number" step="0.0001" className="input w-full" value={state.exchangeRate} onChange={e=>updateField("exchangeRate", e.target.value)} />
+            </div>
+            <div>
+              <div className="label mb-1">Supplier Freight ({state.supplierCurrency})</div>
+              <input type="number" step="0.01" className="input w-full" value={state.freight} onChange={e=>updateField("freight", e.target.value)} />
+            </div>
+            <div>
+              <div className="label mb-1">Supplier Insurance ({state.supplierCurrency})</div>
+              <input type="number" step="0.01" className="input w-full" value={state.insurance} onChange={e=>updateField("insurance", e.target.value)} />
+            </div>
+            <div>
+              <div className="label mb-1">Supplier Other ({state.supplierCurrency})</div>
+              <input type="number" step="0.01" className="input w-full" value={state.supplierOther} onChange={e=>updateField("supplierOther", e.target.value)} />
+            </div>
+          </div>
+        </section>
+
+        {/* Items */}
+        <section className="card rounded p-5">
+          <div className="section-h flex items-center justify-between">
+            <span><span className="marker"></span>Items <span className="text-stone-400 ml-2 font-mono text-xs">({state.items.length})</span></span>
+            <button onClick={addItem} className="btn-ghost px-3 py-1 text-xs uppercase tracking-wider font-semibold rounded">＋ Add row</button>
+          </div>
+          {state.items.length === 0 ? (
+            <div className="text-center py-8 text-sm text-stone-500 italic">
+              No items yet — upload a supplier invoice above, or add manually.
+            </div>
+          ) : (
+            <div className="overflow-x-auto -mx-2">
+              <table className="ledger">
+                <thead>
+                  <tr>
+                    <th>#</th><th>Item Code</th><th>Description</th><th>UOM</th>
+                    <th className="num">Qty</th><th className="num">Unit Px</th><th className="num">Line</th><th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {state.items.map((it, i) => (
+                    <tr key={i}>
+                      <td className="text-stone-400">{i+1}</td>
+                      <td><input className="input w-28" value={it.item_code} onChange={e=>updateItem(i,"item_code",e.target.value)}/></td>
+                      <td><input className="input w-full min-w-[200px]" value={it.description} onChange={e=>updateItem(i,"description",e.target.value)}/></td>
+                      <td><input className="input w-16" value={it.uom||""} onChange={e=>updateItem(i,"uom",e.target.value)}/></td>
+                      <td className="num"><input type="number" step="any" className="input w-20 text-right" value={it.qty} onChange={e=>updateItem(i,"qty",e.target.value)}/></td>
+                      <td className="num"><input type="number" step="any" className="input w-24 text-right" value={it.unit_price} onChange={e=>updateItem(i,"unit_price",e.target.value)}/></td>
+                      <td className="num">{fmt(nz(it.qty)*nz(it.unit_price))}</td>
+                      <td><button className="text-stone-400 hover:text-red-700 text-lg" onClick={()=>removeItem(i)}>×</button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+
+        {/* Finance cost */}
+        <section className="card rounded p-5">
+          <div className="section-h"><span className="marker"></span>Direct Cost (continued)</div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <div className="label mb-1">Finance Cost (MVR) <span className="text-stone-400">— marked with *</span></div>
+              <input type="number" step="0.01" className="input w-full" value={state.financeCost} onChange={e=>updateField("financeCost", e.target.value)} />
+            </div>
+          </div>
+        </section>
+
+        {/* Landing charges */}
+        <section className="card rounded p-5">
+          <div className="section-h flex items-center justify-between">
+            <span><span className="marker"></span>Landing Cost</span>
+            <button onClick={addLanding} className="btn-ghost px-3 py-1 text-xs uppercase tracking-wider font-semibold rounded">＋ Add line</button>
+          </div>
+          <div className="overflow-x-auto -mx-2">
+            <table className="ledger">
+              <thead>
+                <tr>
+                  <th>#</th><th>Description</th><th className="num">Amount</th><th>Ccy</th><th className="num">Rate</th><th className="num">Value (MVR)</th><th>Remarks</th><th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {state.landingCharges.map((lc, i) => {
+                  const r = nz(lc.rate) || (lc.currency === "USD" ? nz(state.exchangeRate) : 1);
+                  const val = nz(lc.amount) * r;
+                  return (
+                    <tr key={i}>
+                      <td className="text-stone-400">2.{i+1}</td>
+                      <td><input className="input w-full min-w-[180px]" value={lc.description} onChange={e=>updateLanding(i,"description",e.target.value)}/></td>
+                      <td className="num"><input type="number" step="0.01" className="input w-24 text-right" value={lc.amount} onChange={e=>updateLanding(i,"amount",e.target.value)}/></td>
+                      <td>
+                        <select className="input w-20" value={lc.currency || "MVR"} onChange={e=>updateLanding(i,"currency",e.target.value)}>
+                          <option>MVR</option><option>USD</option><option>EUR</option>
+                        </select>
+                      </td>
+                      <td className="num"><input type="number" step="any" className="input w-16 text-right" value={lc.rate} onChange={e=>updateLanding(i,"rate",e.target.value)}/></td>
+                      <td className="num font-semibold">{val ? fmt(val) : "-"}</td>
+                      <td><input className="input w-full min-w-[100px]" value={lc.remarks||""} onChange={e=>updateLanding(i,"remarks",e.target.value)}/></td>
+                      <td><button className="text-stone-400 hover:text-red-700 text-lg" onClick={()=>removeLanding(i)}>×</button></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        {/* Distribution method & margin */}
+        <section className="card rounded p-5">
+          <div className="section-h"><span className="marker"></span>Distribution & Pricing</div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <div className="label mb-1">Distribute Landing Cost By</div>
+              <div className="flex gap-2">
+                <button
+                  onClick={()=>updateField("distributionMethod","value")}
+                  className={`px-3 py-2 text-xs uppercase tracking-wider font-semibold rounded border ${state.distributionMethod==="value"?"btn-primary":"btn-ghost"}`}>
+                  By Value
+                </button>
+                <button
+                  onClick={()=>updateField("distributionMethod","qty")}
+                  className={`px-3 py-2 text-xs uppercase tracking-wider font-semibold rounded border ${state.distributionMethod==="qty"?"btn-primary":"btn-ghost"}`}>
+                  By Quantity
+                </button>
+              </div>
+            </div>
+            <div>
+              <div className="label mb-1">Selling Margin Multiplier (Cost × …)</div>
+              <input type="number" step="0.01" className="input w-full" value={state.marginMultiplier} onChange={e=>updateField("marginMultiplier", e.target.value)} />
+              <div className="text-[11px] text-stone-500 mt-1 font-mono">Default 1.85 — adjustable per shipment.</div>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      {/* ── RIGHT: Live totals ── */}
+      <aside className="lg:sticky lg:top-4 self-start space-y-6">
+        <section className="card rounded p-5">
+          <div className="section-h"><span className="marker"></span>Running Totals — MVR</div>
+          <TotalsBlock calc={calc} state={state} />
+          <div className="mt-4 text-center">
+            <span className="stamp">Live · Recalculating</span>
+          </div>
+        </section>
+
+        <section className="card rounded p-5">
+          <div className="section-h"><span className="marker"></span>Quick Check</div>
+          <div className="space-y-2 text-xs font-mono">
+            <div className="flex justify-between"><span>Items:</span><span>{state.items.length}</span></div>
+            <div className="flex justify-between"><span>Landing lines (≠0):</span><span>{state.landingCharges.filter(l=>nz(l.amount)>0).length}</span></div>
+            <div className="flex justify-between"><span>Total qty:</span><span>{fmt(state.items.reduce((s,it)=>s+nz(it.qty),0),0)}</span></div>
+            <div className="flex justify-between"><span>Method:</span><span className="font-semibold">{state.distributionMethod==="qty"?"By Qty":"By Value"}</span></div>
+            <div className="flex justify-between"><span>Margin:</span><span className="font-semibold">×{state.marginMultiplier}</span></div>
+          </div>
+        </section>
+      </aside>
+    </div>
+  );
+}
+
+function TotalsBlock({ calc, state }) {
+  return (
+    <div className="space-y-2 text-sm font-mono">
+      <Row label="Items value" sub={state.supplierCurrency} val={fmt(calc.invoiceValueSupplier)} />
+      <Row label="Supplier addons" sub="(frt+ins+oth)" val={fmt(calc.supplierAddons)} />
+      <div className="border-t border-stone-200 my-1"></div>
+      <Row label="Invoice in MVR" val={fmt(calc.invoiceValueMVR)} />
+      <Row label="Finance cost" val={fmt(calc.financeCostMVR)} />
+      <Row label="Total Direct (A)" val={fmt(calc.totalDirect)} bold />
+      <div className="border-t border-stone-200 my-1"></div>
+      <Row label="Landing cost (B)" val={fmt(calc.totalLanding)} />
+      <Row label="Other cost (C)" val={fmt(calc.totalOther)} />
+      <Row label="Landing + Other (D)" val={fmt(calc.totalLandingAndOther)} bold />
+      <div className="border-t-2 border-stone-800 my-2"></div>
+      <Row label="GRAND TOTAL (A+D)" val={fmt(calc.grandTotal)} big />
+    </div>
+  );
+}
+function Row({ label, sub, val, bold, big }) {
+  return (
+    <div className={`flex justify-between items-baseline ${big?"text-lg":""}`}>
+      <span className={`${bold||big?"font-semibold":"text-stone-600"}`}>{label} {sub && <span className="text-stone-400 text-xs">{sub}</span>}</span>
+      <span className={`${bold||big?"font-bold":""}`} style={big?{color:"var(--accent)"}:{}}>{val}</span>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Preview Tab
+// ─────────────────────────────────────────────────────────────
+function PreviewTab({ state, calc, onSave, saved, busy }) {
+
+  return (
+    <div className="space-y-6">
+      <section className="card rounded p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="label">Costing Sheet</div>
+            <div className="font-display text-2xl font-semibold">{state.refNumber || <span className="text-stone-400 italic text-base">— will be generated on save —</span>}</div>
+            <div className="text-xs font-mono text-stone-500 mt-1">{state.companyName}</div>
+          </div>
+          <div className="flex gap-2 flex-wrap">
+            <button onClick={onSave} disabled={busy} className="btn-primary px-4 py-2 text-xs uppercase tracking-wider font-semibold rounded">
+              {saved ? "✓ Saved" : "Save Costing"}
+            </button>
+            <button onClick={()=>exportPDF(state, calc)} className="btn-ghost px-4 py-2 text-xs uppercase tracking-wider font-semibold rounded">⤓ PDF</button>
+            <button onClick={()=>exportExcel(state, calc)} className="btn-ghost px-4 py-2 text-xs uppercase tracking-wider font-semibold rounded">⤓ Excel</button>
+          </div>
+        </div>
+      </section>
+
+      {/* Costing Sheet preview */}
+      <section className="card rounded p-6 ledger-grid">
+        <div className="text-center mb-4">
+          <h2 className="font-display text-3xl font-semibold">Costing Sheet</h2>
+          <div className="text-xs font-mono text-stone-600 mt-1">
+            TIN: {state.companyTIN || "—"} · Reg No: {state.companyReg || "—"}
+          </div>
+        </div>
+
+        <div className="grid sm:grid-cols-2 gap-3 text-xs font-mono mb-4">
+          <div><strong>{state.companyName}</strong></div>
+          <div className="sm:text-right"><strong>Costing Sheet No:</strong> {state.refNumber || "—"}</div>
+          <div>BL No: {state.blNo}</div>
+          <div className="sm:text-right">Godown Received: {state.godownDate}</div>
+          <div>Godown: {state.godown1}</div>
+          <div className="sm:text-right">Shipment Ref: {state.shipmentRef}</div>
+          <div>Vendor: {state.supplierName}</div>
+          <div className="sm:text-right">Cost Sheet Date: {state.costSheetDate}</div>
+          <div>Invoice No: {state.supplierInvoiceNo}</div>
+          <div className="sm:text-right">Currency: {state.supplierCurrency} @ {state.exchangeRate}</div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="ledger">
+            <thead>
+              <tr>
+                <th>Srn</th><th>Description</th><th>Doc Ref</th><th className="num">Amount</th>
+                <th>Ccy</th><th className="num">Rate</th><th className="num">Value (MVR)</th><th>Remarks</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr style={{background:"#e8f5e9"}}><td><strong>1.0</strong></td><td colSpan="7"><strong>DIRECT COST</strong></td></tr>
+              <tr><td>1.1</td><td>INVOICE VALUE</td><td>{state.supplierInvoiceNo}</td>
+                <td className="num">{fmt(calc.totalSupplierValue)}</td><td>{state.supplierCurrency}</td>
+                <td className="num">{fmt(state.exchangeRate)}</td><td className="num">{fmt(calc.invoiceValueMVR)}</td><td></td></tr>
+              <tr><td>1.2</td><td>FINANCE COST*</td><td></td>
+                <td className="num">{fmt(calc.financeCostMVR)}</td><td>MVR</td><td className="num">1.00</td>
+                <td className="num">{fmt(calc.financeCostMVR)}</td><td></td></tr>
+              <tr style={{background:"#e3f2fd"}}><td colSpan="6" className="num"><strong>Total Direct Cost (A)</strong></td>
+                <td className="num"><strong>{fmt(calc.totalDirect)}</strong></td><td></td></tr>
+
+              <tr style={{background:"#e8f5e9"}}><td><strong>2.0</strong></td><td colSpan="7"><strong>LANDING COST</strong></td></tr>
+              {state.landingCharges.map((lc, i) => {
+                const r = nz(lc.rate) || (lc.currency === "USD" ? nz(state.exchangeRate) : 1);
+                const val = nz(lc.amount) * r;
+                return (
+                  <tr key={i}>
+                    <td>2.{i+1}</td><td>{lc.description}</td><td></td>
+                    <td className="num" style={{color: nz(lc.amount)>0?"#b91c1c":undefined}}>{nz(lc.amount)?fmt(nz(lc.amount)):"-"}</td>
+                    <td>{lc.currency}</td><td className="num">{fmt(r)}</td>
+                    <td className="num">{val?fmt(val):"-"}</td><td>{lc.remarks}</td>
+                  </tr>
+                );
+              })}
+              <tr style={{background:"#e3f2fd"}}><td colSpan="6" className="num"><strong>Total Landing Cost (B)</strong></td>
+                <td className="num"><strong>{fmt(calc.totalLanding)}</strong></td><td></td></tr>
+
+              <tr><td colSpan="6" className="num">Total Other Cost (C)</td>
+                <td className="num">{fmt(calc.totalOther)}</td><td></td></tr>
+              <tr style={{background:"#fff3cd"}}><td colSpan="6" className="num"><strong>Total Landing and Other Cost (D)</strong></td>
+                <td className="num"><strong>{fmt(calc.totalLandingAndOther)}</strong></td><td></td></tr>
+              <tr style={{background:"#ffdc97"}}>
+                <td colSpan="6" className="num"><strong>Total Cost to Be Distributed (A+D)</strong></td>
+                <td className="num"><strong>{fmt(calc.grandTotal)}</strong></td><td></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div className="mt-4 text-[11px] italic text-stone-500 font-mono">
+          * Costs with star marks are only absorbing/considering for price-setting decisions and other than those two costs, we are receiving system.
+        </div>
+        <div className="mt-6 grid grid-cols-3 gap-4 text-xs font-mono">
+          <div className="text-center border-t border-stone-400 pt-2">Prepared By<br/><strong>{state.preparedBy || "—"}</strong></div>
+          <div className="text-center border-t border-stone-400 pt-2">Checked By</div>
+          <div className="text-center border-t border-stone-400 pt-2">Approved By</div>
+        </div>
+      </section>
+
+      {/* Distribution Sheet */}
+      <section className="card rounded p-6">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-display text-xl font-semibold">Cost Distribution Among Items</h3>
+          <span className="chip gold">Method: {state.distributionMethod === "qty" ? "By Quantity" : "By Value"}</span>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="ledger">
+            <thead>
+              <tr>
+                <th>#</th><th>Code</th><th>Description</th><th>UOM</th>
+                <th className="num">Qty</th><th className="num">Unit Px ({state.supplierCurrency})</th>
+                <th className="num">Line (MVR)</th><th className="num">Frt+Fin</th>
+                <th className="num">Direct</th><th className="num">Landing</th>
+                <th className="num">Total Cost</th><th className="num">Unit Cost</th>
+              </tr>
+            </thead>
+            <tbody>
+              {calc.items.map((it, i) => (
+                <tr key={i}>
+                  <td className="text-stone-400">{i+1}</td>
+                  <td>{it.item_code}</td>
+                  <td>{it.description}</td>
+                  <td>{it.uom}</td>
+                  <td className="num">{fmt(nz(it.qty),0)}</td>
+                  <td className="num">{fmt(nz(it.unit_price))}</td>
+                  <td className="num">{fmt(it.lineMVRBase)}</td>
+                  <td className="num">{fmt(it.addonMVR + it.financeShare)}</td>
+                  <td className="num">{fmt(it.directMVR)}</td>
+                  <td className="num">{fmt(it.landingShareMVR)}</td>
+                  <td className="num font-semibold">{fmt(it.totalCostMVR)}</td>
+                  <td className="num font-semibold" style={{color:"var(--accent)"}}>{fmt(it.unitCostMVR)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {/* Selling */}
+      <section className="card rounded p-6">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-display text-xl font-semibold">Suggested Selling Price</h3>
+          <span className="chip">Multiplier: ×{state.marginMultiplier}</span>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="ledger">
+            <thead>
+              <tr>
+                <th>#</th><th>Code</th><th>Description</th><th>UOM</th>
+                <th className="num">Qty</th><th className="num">Unit Cost (MVR)</th>
+                <th className="num">Suggested / Unit (MVR)</th><th className="num">Line Selling (MVR)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {calc.items.map((it, i) => (
+                <tr key={i}>
+                  <td className="text-stone-400">{i+1}</td>
+                  <td>{it.item_code}</td>
+                  <td>{it.description}</td>
+                  <td>{it.uom}</td>
+                  <td className="num">{fmt(nz(it.qty),0)}</td>
+                  <td className="num">{fmt(it.unitCostMVR)}</td>
+                  <td className="num font-semibold" style={{color:"var(--ok)"}}>{fmt(it.sellingPriceMVR)}</td>
+                  <td className="num">{fmt(it.lineSellingMVR)}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr style={{background:"#fbf8f1"}}>
+                <td colSpan="7" className="num"><strong>Total line selling</strong></td>
+                <td className="num"><strong>{fmt(calc.items.reduce((s,it)=>s+it.lineSellingMVR,0))}</strong></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// History Tab
+// ─────────────────────────────────────────────────────────────
+function HistoryTab({ history, onLoad, onDelete }) {
+  const [q, setQ] = useState("");
+  const filtered = history.filter(h =>
+    !q ||
+    h.ref.toLowerCase().includes(q.toLowerCase()) ||
+    (h.supplierName||"").toLowerCase().includes(q.toLowerCase()) ||
+    (h.supplierInvoiceNo||"").toLowerCase().includes(q.toLowerCase())
+  );
+  return (
+    <div className="card rounded p-5">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <div>
+          <h2 className="font-display text-2xl font-semibold">Costing History</h2>
+          <p className="text-xs text-stone-500 font-mono">{history.length} costing{history.length!==1?"s":""} saved</p>
+        </div>
+        <input className="input min-w-[240px]" placeholder="Search by ref, supplier, invoice…" value={q} onChange={e=>setQ(e.target.value)} />
+      </div>
+      {filtered.length === 0 ? (
+        <div className="text-center py-10 text-sm text-stone-500 italic">No costings saved yet.</div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="ledger">
+            <thead>
+              <tr>
+                <th>Costing Ref</th><th>Date</th><th>Co.</th>
+                <th>Supplier</th><th>Invoice</th><th className="num">Grand Total (MVR)</th><th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map(h => (
+                <tr key={h.ref}>
+                  <td className="font-semibold">{h.ref}</td>
+                  <td>{h.date}</td>
+                  <td><span className={`chip ${h.company==="PPM"?"ppm":h.company==="PSMS"?"psms":"gold"}`}>{h.company}</span></td>
+                  <td>{h.supplierName}</td>
+                  <td>{h.supplierInvoiceNo}</td>
+                  <td className="num font-semibold">{fmt(h.grandTotal)}</td>
+                  <td>
+                    <div className="flex gap-1">
+                      <button className="btn-ghost px-2 py-1 text-[10px] uppercase rounded" onClick={()=>onLoad(h)}>Open</button>
+                      <button className="btn-ghost px-2 py-1 text-[10px] uppercase rounded" onClick={()=>onDelete(h.ref)}>Del</button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <div className="mt-4 text-[11px] font-mono text-stone-500 italic">
+        Reference numbers auto-generate per company prefix (PSMS/PPM/QCSM) — if history is deleted, the counter persists, so refs continue forward. Manual override available in the New Costing tab.
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Master Tab
+// ─────────────────────────────────────────────────────────────
+function MasterTab({ master }) {
+  const [q, setQ] = useState("");
+  const [groupByItem, setGroupByItem] = useState(true);
+
+  const filtered = master.filter(r =>
+    !q || (r.item_code||"").toLowerCase().includes(q.toLowerCase())
+       || (r.description||"").toLowerCase().includes(q.toLowerCase())
+       || (r.supplier||"").toLowerCase().includes(q.toLowerCase())
+       || (r.ref||"").toLowerCase().includes(q.toLowerCase())
+  );
+
+  // Group by item_code
+  const grouped = useMemo(() => {
+    const g = {};
+    filtered.forEach(r => {
+      const k = r.item_code || r.description;
+      if (!g[k]) g[k] = { item_code: r.item_code, description: r.description, uom: r.uom, entries: [] };
+      g[k].entries.push(r);
+    });
+    return Object.values(g);
+  }, [filtered]);
+
+  return (
+    <div className="card rounded p-5">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <div>
+          <h2 className="font-display text-2xl font-semibold">Master Item History</h2>
+          <p className="text-xs text-stone-500 font-mono">{master.length} entries across {grouped.length} unique items</p>
+        </div>
+        <div className="flex gap-2 items-center">
+          <button onClick={()=>setGroupByItem(g=>!g)} className="btn-ghost px-3 py-1 text-xs uppercase tracking-wider font-semibold rounded">
+            {groupByItem ? "View: flat" : "View: grouped"}
+          </button>
+          <button onClick={()=>exportMasterExcel(master)} className="btn-primary px-3 py-1 text-xs uppercase tracking-wider font-semibold rounded">⤓ Export Excel</button>
+          <input className="input min-w-[200px]" placeholder="Search code / supplier / ref…" value={q} onChange={e=>setQ(e.target.value)} />
+        </div>
+      </div>
+
+      {filtered.length === 0 ? (
+        <div className="text-center py-10 text-sm text-stone-500 italic">No master entries yet. Saved costings populate this.</div>
+      ) : groupByItem ? (
+        <div className="space-y-2">
+          {grouped.map((g, i) => (
+            <details key={i} className="border border-stone-200 rounded">
+              <summary className="cursor-pointer px-3 py-2 flex items-center justify-between hover:bg-stone-50">
+                <span><span className="chev">▶</span> <span className="font-mono font-semibold ml-1">{g.item_code}</span> <span className="text-stone-600 ml-2">{g.description}</span></span>
+                <span className="text-xs text-stone-500 font-mono">{g.entries.length} shipment{g.entries.length>1?"s":""}</span>
+              </summary>
+              <div className="overflow-x-auto">
+                <table className="ledger">
+                  <thead>
+                    <tr>
+                      <th>Date</th><th>Ref</th><th>Co.</th><th>Supplier</th><th>Inv.</th>
+                      <th className="num">Qty</th><th className="num">Unit Cost (MVR)</th><th className="num">Selling (MVR)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {g.entries.sort((a,b)=>b.date.localeCompare(a.date)).map((r,ii) => (
+                      <tr key={ii}>
+                        <td>{r.date}</td>
+                        <td className="font-semibold">{r.ref}</td>
+                        <td><span className={`chip ${r.company==="PPM"?"ppm":r.company==="PSMS"?"psms":"gold"}`}>{r.company}</span></td>
+                        <td>{r.supplier}</td>
+                        <td>{r.supplier_invoice}</td>
+                        <td className="num">{fmt(r.qty,0)}</td>
+                        <td className="num font-semibold">{fmt(r.unit_cost_mvr)}</td>
+                        <td className="num" style={{color:"var(--ok)"}}>{fmt(r.selling_mvr)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          ))}
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="ledger">
+            <thead>
+              <tr>
+                <th>Date</th><th>Ref</th><th>Co.</th><th>Item</th><th>Description</th>
+                <th className="num">Qty</th><th className="num">Unit Cost</th><th className="num">Selling</th><th>Supplier</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((r,i) => (
+                <tr key={i}>
+                  <td>{r.date}</td><td>{r.ref}</td>
+                  <td><span className={`chip ${r.company==="PPM"?"ppm":r.company==="PSMS"?"psms":"gold"}`}>{r.company}</span></td>
+                  <td className="font-semibold">{r.item_code}</td>
+                  <td>{r.description}</td>
+                  <td className="num">{fmt(r.qty,0)}</td>
+                  <td className="num">{fmt(r.unit_cost_mvr)}</td>
+                  <td className="num" style={{color:"var(--ok)"}}>{fmt(r.selling_mvr)}</td>
+                  <td>{r.supplier}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Settings Tab
+// ─────────────────────────────────────────────────────────────
+function SettingsTab({ settings, onSave }) {
+  const [local, setLocal] = useState(settings);
+  useEffect(()=>setLocal(settings), [settings]);
+  return (
+    <div className="card rounded p-5 max-w-xl">
+      <h2 className="font-display text-2xl font-semibold mb-4">Defaults</h2>
+      <div className="space-y-4">
+        <div>
+          <div className="label mb-1">Default Exchange Rate (→ MVR)</div>
+          <input type="number" step="0.0001" className="input w-full" value={local.defaultRate} onChange={e=>setLocal({...local, defaultRate: Number(e.target.value)})}/>
+        </div>
+        <div>
+          <div className="label mb-1">Default Margin Multiplier</div>
+          <input type="number" step="0.01" className="input w-full" value={local.defaultMargin} onChange={e=>setLocal({...local, defaultMargin: Number(e.target.value)})}/>
+          <div className="text-[11px] font-mono text-stone-500 mt-1">Selling = Unit Cost × multiplier. Default 1.85.</div>
+        </div>
+        <div>
+          <div className="label mb-1">Default Company</div>
+          <select className="input w-full" value={local.defaultCompany} onChange={e=>setLocal({...local, defaultCompany: e.target.value})}>
+            <option value="PSMS">PSMS — ProSynergy</option>
+            <option value="PPM">PPM — Pro Pharma</option>
+            <option value="QCSM">QCSM — Quality Control Sys</option>
+          </select>
+        </div>
+        <button className="btn-primary px-4 py-2 text-xs uppercase tracking-wider font-semibold rounded" onClick={()=>onSave(local)}>Save defaults</button>
+      </div>
+
+      <div className="rule mt-8 mb-4">⁂</div>
+
+      <h3 className="font-display text-lg font-semibold mb-2">Reference numbering</h3>
+      <p className="text-xs font-mono text-stone-600 leading-relaxed">
+        Costing refs follow the pattern <span className="font-semibold">[PREFIX]/COS/[YEAR]/[NNN]</span> — e.g. <span className="font-semibold">PSMS/COS/2026/046</span>.
+        Numbers increment per company per year. Deleting a history entry does not roll back the counter, so refs stay unique and verifiable.
+        If a ref ever needs to be re-issued manually, you can type it directly in the New Costing tab.
+      </p>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
