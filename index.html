@@ -243,29 +243,59 @@ async function pdfFirstPageToImage(file) {
   return canvas.toDataURL("image/png").split(",")[1];
 }
 
-async function callClaude(messages) {
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 4000,
-      messages
-    })
-  });
-  if (!res.ok) throw new Error("API error " + res.status);
-  const data = await res.json();
-  const text = data.content.filter(c => c.type === "text").map(c => c.text).join("\n");
-  return text;
+// Calls Claude from inside the artifact runtime.
+// window.claude.complete takes a single text prompt and returns text.
+async function callClaudeText(prompt) {
+  if (!window.claude || typeof window.claude.complete !== "function") {
+    throw new Error("AI runtime unavailable. Open this tool inside Claude.ai.");
+  }
+  const reply = await window.claude.complete(prompt);
+  return reply;
+}
+
+// Extract all text from a PDF using pdf.js (runs locally, no network).
+async function pdfToText(file) {
+  const buf = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+  let out = "";
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const page = await pdf.getPage(p);
+    const content = await page.getTextContent();
+    // Reconstruct rough layout: group by vertical position
+    const items = content.items;
+    let lastY = null, line = "";
+    const lines = [];
+    items.forEach(it => {
+      const y = Math.round(it.transform[5]);
+      if (lastY === null) lastY = y;
+      if (Math.abs(y - lastY) > 3) {
+        lines.push(line);
+        line = "";
+        lastY = y;
+      }
+      line += it.str + " ";
+    });
+    if (line) lines.push(line);
+    out += lines.join("\n") + "\n\n";
+  }
+  return out.trim();
 }
 
 function extractJson(text) {
-  // strip code fences and pick the JSON object
-  let t = text.replace(/```json/g, "").replace(/```/g, "").trim();
+  if (text == null) throw new Error("Empty AI response");
+  // strip code fences
+  let t = String(text).replace(/```json/gi, "").replace(/```/g, "").trim();
+  // pick the outermost JSON object
   const start = t.indexOf("{");
   const end = t.lastIndexOf("}");
   if (start >= 0 && end > start) t = t.slice(start, end + 1);
-  return JSON.parse(t);
+  // remove trailing commas before } or ]
+  t = t.replace(/,\s*([}\]])/g, "$1");
+  try {
+    return JSON.parse(t);
+  } catch (e) {
+    throw new Error("Could not parse AI response as JSON. Try re-uploading.");
+  }
 }
 
 const SUPPLIER_PROMPT = `You are extracting line items from a supplier commercial invoice for an imports costing tool.
@@ -321,46 +351,38 @@ Rules: numbers raw (no commas), include every charge line.`;
 async function extractSupplierInvoice(file) {
   const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
   const isImg = file.type.startsWith("image/");
-  let content;
+  let docText;
   if (isPdf) {
-    const b64 = await fileToBase64(file);
-    content = [
-      { type: "document", source: { type: "base64", media_type: "application/pdf", data: b64 } },
-      { type: "text", text: SUPPLIER_PROMPT }
-    ];
+    docText = await pdfToText(file);
+    if (!docText || docText.length < 20) {
+      throw new Error("This PDF has no selectable text (likely a scan). Please upload an Excel or a text-based PDF.");
+    }
   } else if (isImg) {
-    const b64 = await fileToBase64(file);
-    content = [
-      { type: "image", source: { type: "base64", media_type: file.type, data: b64 } },
-      { type: "text", text: SUPPLIER_PROMPT }
-    ];
+    throw new Error("Image OCR isn't supported here yet — please upload the PDF or Excel version.");
   } else {
-    throw new Error("Unsupported file type for AI extraction: " + file.name);
+    throw new Error("Unsupported file type: " + file.name);
   }
-  const text = await callClaude([{ role: "user", content }]);
+  const prompt = SUPPLIER_PROMPT + "\n\n=== INVOICE TEXT ===\n" + docText + "\n=== END ===";
+  const text = await callClaudeText(prompt);
   return extractJson(text);
 }
 
 async function extractExpenseInvoice(file) {
   const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
   const isImg = file.type.startsWith("image/");
-  let content;
+  let docText;
   if (isPdf) {
-    const b64 = await fileToBase64(file);
-    content = [
-      { type: "document", source: { type: "base64", media_type: "application/pdf", data: b64 } },
-      { type: "text", text: EXPENSE_PROMPT }
-    ];
+    docText = await pdfToText(file);
+    if (!docText || docText.length < 20) {
+      throw new Error("This PDF has no selectable text (likely a scan). Please upload an Excel or a text-based PDF.");
+    }
   } else if (isImg) {
-    const b64 = await fileToBase64(file);
-    content = [
-      { type: "image", source: { type: "base64", media_type: file.type, data: b64 } },
-      { type: "text", text: EXPENSE_PROMPT }
-    ];
+    throw new Error("Image OCR isn't supported here yet — please upload the PDF or Excel version.");
   } else {
     throw new Error("Unsupported file type: " + file.name);
   }
-  const text = await callClaude([{ role: "user", content }]);
+  const prompt = EXPENSE_PROMPT + "\n\n=== INVOICE TEXT ===\n" + docText + "\n=== END ===";
+  const text = await callClaudeText(prompt);
   return extractJson(text);
 }
 
@@ -472,17 +494,31 @@ function calculateCosting(state) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Reference number generator
+// Supplier short-code (e.g. ORTHO CLINICAL... -> OR, FUJIFILM -> FU)
 // ─────────────────────────────────────────────────────────────
-async function nextRefNumber(companyPrefix) {
+function supplierCode(name) {
+  if (!name) return "XX";
+  const clean = name.toUpperCase().replace(/[^A-Z ]/g, "").trim();
+  const first = clean.split(/\s+/)[0] || "XX";
+  return first.substring(0, 2);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Reference number generator
+// Format: PREFIX/ACC/COS/YEAR/SUPPLIERCODE/NNN
+// e.g. PSMS/ACC/COS/2026/OR/001
+// ─────────────────────────────────────────────────────────────
+async function nextRefNumber(companyPrefix, suppName) {
   const counters = await storeGet(COUNTER_KEY, {});
   const year = new Date().getFullYear();
-  const key = `${companyPrefix}-${year}`;
+  const code = supplierCode(suppName);
+  // Counter scoped per company + supplier + year
+  const key = `${companyPrefix}-${code}-${year}`;
   const next = (counters[key] || 0) + 1;
   counters[key] = next;
   await storeSet(COUNTER_KEY, counters);
   const padded = String(next).padStart(3, "0");
-  return `${companyPrefix}/COS/${year}/${padded}`;
+  return `${companyPrefix}/ACC/COS/${year}/${code}/${padded}`;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -777,7 +813,7 @@ const DEFAULT_STATE = () => ({
   godown2: "",
   blNo: "",
   shipmentRef: "",
-  preparedBy: "",
+  preparedBy: "Dilantha Chinthana",
 
   supplierName: "",
   supplierInvoiceNo: "",
@@ -890,7 +926,7 @@ function App() {
           const sheet = wb.Sheets[wb.SheetNames[0]];
           const csv = XLSX.utils.sheet_to_csv(sheet);
           const prompt = kind === "supplier" ? SUPPLIER_PROMPT : EXPENSE_PROMPT;
-          const text = await callClaude([{ role: "user", content: [{ type: "text", text: prompt + "\n\nHere is the spreadsheet content:\n\n" + csv }] }]);
+          const text = await callClaudeText(prompt + "\n\n=== SPREADSHEET CONTENT (CSV) ===\n" + csv + "\n=== END ===");
           const data = extractJson(text);
           applyExtraction(data, kind, f.name);
           results.push({ name: f.name, kind, ok: true });
@@ -978,7 +1014,7 @@ function App() {
     setBusy(true); setBusyMsg("Saving…");
     let ref = state.refNumber;
     if (!ref) {
-      ref = await nextRefNumber(COMPANY_PRESETS[state.company].prefix);
+      ref = await nextRefNumber(COMPANY_PRESETS[state.company].prefix, state.supplierName);
     }
     const finalState = { ...state, refNumber: ref };
     const record = {
@@ -1026,6 +1062,23 @@ function App() {
   const loadFromHistory = (rec) => {
     setState(rec.state);
     setTab("new");
+  };
+
+  // Generate a reference number on demand (used by the "Generate" button and by Next-stage)
+  const genRefNow = async () => {
+    const ref = await nextRefNumber(COMPANY_PRESETS[state.company].prefix, state.supplierName);
+    setState(p => ({ ...p, refNumber: ref }));
+    setSaved(false);
+    return ref;
+  };
+
+  // Move from Build to Review; auto-generate ref if not set yet
+  const goToReview = async () => {
+    if (!state.refNumber) {
+      await genRefNow();
+    }
+    setTab("preview");
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   const deleteHistoryEntry = async (ref) => {
@@ -1094,6 +1147,7 @@ function App() {
           extractedFiles={extractedFiles} setExtractedFiles={setExtractedFiles}
           calc={calc} busy={busy} busyMsg={busyMsg}
           settings={settings}
+          genRefNow={genRefNow} goToReview={goToReview}
         />
       )}
       {tab === "preview" && (
@@ -1133,7 +1187,7 @@ function App() {
 function BuildTab({ state, setState, updateField, updateItem, updateLanding,
                     addItem, removeItem, addLanding, removeLanding,
                     changeCompany, handleFileUpload, extractedFiles, setExtractedFiles,
-                    calc, busy, busyMsg, settings }) {
+                    calc, busy, busyMsg, settings, genRefNow, goToReview }) {
 
   const supplierDropRef = useRef(null);
   const expenseDropRef = useRef(null);
@@ -1189,7 +1243,13 @@ function BuildTab({ state, setState, updateField, updateItem, updateLanding,
             </div>
             <div className="col-span-2 sm:col-span-1">
               <div className="label mb-1">Costing Ref No.</div>
-              <input className="input w-full" placeholder="auto-generates on save" value={state.refNumber} onChange={e=>updateField("refNumber", e.target.value)} />
+              <div className="flex gap-2">
+                <input className="input w-full" placeholder="auto on Next / Generate" value={state.refNumber} onChange={e=>updateField("refNumber", e.target.value)} />
+                <button onClick={genRefNow} title="Generate reference now" className="btn-ghost px-3 py-1 text-xs uppercase tracking-wider font-semibold rounded whitespace-nowrap">⟳ Gen</button>
+              </div>
+              <div className="text-[10px] text-stone-500 mt-1 font-mono">
+                {state.company}/ACC/COS/{new Date().getFullYear()}/{state.supplierName ? state.supplierName.toUpperCase().replace(/[^A-Z ]/g,"").trim().split(/\s+/)[0].substring(0,2) : "XX"}/NNN
+              </div>
             </div>
           </div>
         </section>
@@ -1206,10 +1266,10 @@ function BuildTab({ state, setState, updateField, updateItem, updateLanding,
               onDragLeave={e=>e.currentTarget.classList.remove("over")}
               onDrop={e=>onDrop(e,"supplier")}
             >
-              <input type="file" multiple accept=".pdf,.png,.jpg,.jpeg,.webp,.xlsx,.xls" className="hidden" onChange={e=>handleFileUpload(e.target.files, "supplier")} disabled={busy}/>
+              <input type="file" multiple accept=".pdf,.xlsx,.xls" className="hidden" onChange={e=>handleFileUpload(e.target.files, "supplier")} disabled={busy}/>
               <div className="text-2xl mb-1">📄</div>
               <div className="font-semibold text-sm">Supplier Invoice</div>
-              <div className="text-xs text-stone-500 mt-1">Drop PDF / image / Excel — items, prices, freight, insurance extracted automatically</div>
+              <div className="text-xs text-stone-500 mt-1">Drop text-based PDF or Excel — items, prices, freight, insurance extracted by AI</div>
             </label>
 
             <label
@@ -1219,10 +1279,10 @@ function BuildTab({ state, setState, updateField, updateItem, updateLanding,
               onDragLeave={e=>e.currentTarget.classList.remove("over")}
               onDrop={e=>onDrop(e,"expense")}
             >
-              <input type="file" multiple accept=".pdf,.png,.jpg,.jpeg,.webp,.xlsx,.xls" className="hidden" onChange={e=>handleFileUpload(e.target.files, "expense")} disabled={busy}/>
+              <input type="file" multiple accept=".pdf,.xlsx,.xls" className="hidden" onChange={e=>handleFileUpload(e.target.files, "expense")} disabled={busy}/>
               <div className="text-2xl mb-1">🧾</div>
               <div className="font-semibold text-sm">Clearance / Expense Invoice</div>
-              <div className="text-xs text-stone-500 mt-1">Drop O'Nala or similar agent invoice — charges added into Landing Costs</div>
+              <div className="text-xs text-stone-500 mt-1">Drop O'Nala or similar agent invoice (PDF/Excel) — charges added into Landing Costs</div>
             </label>
           </div>
 
@@ -1392,6 +1452,19 @@ function BuildTab({ state, setState, updateField, updateItem, updateLanding,
             </div>
           </div>
         </section>
+
+        {/* Next stage */}
+        <div className="flex items-center justify-between gap-3 pt-2">
+          <div className="text-xs font-mono text-stone-500">
+            {state.items.length} item{state.items.length!==1?"s":""} · {state.landingCharges.filter(l=>nz(l.amount)>0).length} expense line{state.landingCharges.filter(l=>nz(l.amount)>0).length!==1?"s":""}
+          </div>
+          <button
+            onClick={goToReview}
+            disabled={state.items.length === 0}
+            className="btn-primary px-6 py-3 text-sm uppercase tracking-wider font-semibold rounded">
+            Next: Review & Export →
+          </button>
+        </div>
       </div>
 
       {/* ── RIGHT: Live totals ── */}
